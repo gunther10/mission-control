@@ -39,6 +39,14 @@ describe('buildGatewayWebSocketUrl', () => {
       host: 'https://bill.tail8b4599.ts.net:4443/sessions?foo=bar#frag',
       port: 18789,
       browserProtocol: 'https:',
-    })).toBe('wss://bill.tail8b4599.ts.net:4443')
+    })).toBe('wss://bill.tail8b4599.ts.net:4443/sessions')
+  })
+
+  it('preserves explicit reverse-proxy paths for same-origin websocket routing', () => {
+    expect(buildGatewayWebSocketUrl({
+      host: 'https://hmac-server.tail174f30.ts.net/openclaw',
+      port: 18789,
+      browserProtocol: 'https:',
+    })).toBe('wss://hmac-server.tail174f30.ts.net/openclaw')
   })
 })
