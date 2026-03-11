@@ -47,7 +47,7 @@ export function MemoryBrowserPanel() {
       setMemoryFiles(data.tree || [])
 
       // Auto-expand some common directories
-      setExpandedFolders(new Set(['daily', 'knowledge', 'memory', 'knowledge-base']))
+      setExpandedFolders(new Set(['daily', 'knowledge', 'memory', 'knowledge-base', 'shared-memory']))
     } catch (error) {
       log.error('Failed to load file tree:', error)
     } finally {
@@ -64,7 +64,7 @@ export function MemoryBrowserPanel() {
 
     const tabPrefixes = activeTab === 'daily'
       ? ['daily/', 'memory/']
-      : ['knowledge/', 'knowledge-base/']
+      : ['knowledge/', 'knowledge-base/', 'shared-memory/']
 
     return memoryFiles.filter((file) => {
       const normalizedPath = `${file.path.replace(/\\/g, '/')}/`

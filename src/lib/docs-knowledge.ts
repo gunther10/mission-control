@@ -4,7 +4,20 @@ import { dirname, join, sep } from 'path'
 import { resolveWithin } from '@/lib/paths'
 import { config } from '@/lib/config'
 
-const DOC_ROOT_CANDIDATES = ['docs', 'knowledge-base', 'knowledge', 'memory']
+const DOC_ROOT_CANDIDATES = ['docs', 'knowledge-base', 'knowledge', 'memory', 'shared-memory', 'reports']
+
+function docsBaseDir(): string {
+  return process.env.MISSION_CONTROL_DOCS_DIR || process.env.OPENCLAW_DOCS_DIR || config.memoryDir
+}
+
+function docsAllowedRootsFromEnv(baseDir: string): string[] {
+  const raw = process.env.MISSION_CONTROL_DOCS_ALLOWED_PREFIXES || process.env.OPENCLAW_DOCS_ALLOWED_PREFIXES || ''
+  return raw
+    .split(',')
+    .map((part) => normalizeRelativePath(part).replace(/\/$/, ''))
+    .filter(Boolean)
+    .filter((prefix) => existsSync(join(baseDir, prefix)))
+}
 
 export interface DocsTreeNode {
   path: string
@@ -57,6 +70,9 @@ async function resolveSafePath(baseDir: string, relativePath: string): Promise<s
 }
 
 function allowedRoots(baseDir: string): string[] {
+  const envRoots = docsAllowedRootsFromEnv(baseDir)
+  if (envRoots.length > 0) return envRoots
+
   const candidateRoots = DOC_ROOT_CANDIDATES.filter((root) => existsSync(join(baseDir, root)))
   if (candidateRoots.length > 0) return candidateRoots
 
@@ -69,7 +85,7 @@ function allowedRoots(baseDir: string): string[] {
 }
 
 export function listDocsRoots(): string[] {
-  const baseDir = config.memoryDir
+  const baseDir = docsBaseDir()
   if (!baseDir || !existsSync(baseDir)) return []
   return allowedRoots(baseDir)
 }
@@ -78,7 +94,7 @@ export function isDocsPathAllowed(relativePath: string): boolean {
   const normalized = normalizeRelativePath(relativePath)
   if (!normalized) return false
 
-  const baseDir = config.memoryDir
+  const baseDir = docsBaseDir()
   if (!baseDir || !existsSync(baseDir)) return false
 
   const roots = allowedRoots(baseDir)
@@ -128,7 +144,7 @@ async function buildTreeFrom(dirPath: string, relativeBase: string): Promise<Doc
 }
 
 export async function getDocsTree(): Promise<DocsTreeNode[]> {
-  const baseDir = config.memoryDir
+  const baseDir = docsBaseDir()
   if (!baseDir || !existsSync(baseDir)) return []
 
   const roots = allowedRoots(baseDir)
@@ -159,7 +175,7 @@ export async function readDocsContent(relativePath: string): Promise<{ content: 
     throw new Error('Path not allowed')
   }
 
-  const baseDir = config.memoryDir
+  const baseDir = docsBaseDir()
   if (!baseDir || !existsSync(baseDir)) {
     throw new Error('Docs directory not configured')
   }
@@ -181,7 +197,7 @@ function isSearchable(name: string): boolean {
 }
 
 export async function searchDocs(query: string, limit = 100): Promise<Array<{ path: string; name: string; matches: number }>> {
-  const baseDir = config.memoryDir
+  const baseDir = docsBaseDir()
   if (!baseDir || !existsSync(baseDir)) return []
 
   const roots = allowedRoots(baseDir)
