@@ -1,7 +1,14 @@
 'use client'
 
 import { Session } from '@/types'
-import { formatAge, parseTokenUsage, getStatusBadgeColor } from '@/lib/utils'
+import { useMissionControl } from '@/store'
+import {
+  deriveSessionOperatorStatus,
+  formatNextExpectedTime,
+  formatRelativeOperatorTime,
+  getOperatorToneClasses,
+} from '@/lib/operator-status'
+import { formatAge, parseTokenUsage } from '@/lib/utils'
 
 interface SessionsListProps {
   sessions: Session[]
@@ -12,9 +19,16 @@ interface SessionCardProps {
 }
 
 function SessionCard({ session }: SessionCardProps) {
+  const { connection, execApprovals, spawnRequests, cronJobs } = useMissionControl()
   const tokenUsage = parseTokenUsage(session.tokens)
-  const statusColor = session.active ? 'success' : 'warning'
-  
+  const operatorStatus = deriveSessionOperatorStatus({
+    session: session as any,
+    connection,
+    execApprovals,
+    spawnRequests,
+    cronJobs,
+  })
+
   const getSessionTypeIcon = (key: string) => {
     if (key.includes('main:main')) return '👑'
     if (key.includes('subagent')) return '🤖'
@@ -98,14 +112,22 @@ function SessionCard({ session }: SessionCardProps) {
         </div>
 
         <div className="flex flex-col items-end space-y-1">
-          {/* Working/Status Badge */}
-          <div className={`px-2 py-1 rounded-full border text-xs font-medium ${
-            session.active 
-              ? 'bg-green-500/20 text-green-400 border-green-500/30 animate-pulse'
-              : 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30'
-          }`}>
-            {session.active ? 'WORKING' : 'IDLE'}
+          <div className={`px-2 py-1 rounded-full border text-xs font-medium ${getOperatorToneClasses(operatorStatus.tone)} ${operatorStatus.state === 'running' ? 'animate-pulse' : ''}`}>
+            {operatorStatus.label.toUpperCase()}
           </div>
+          <div className="max-w-[14rem] text-right text-[11px] text-muted-foreground">
+            {operatorStatus.reason}
+          </div>
+          {operatorStatus.nextExpectedAt && (
+            <div className="text-[11px] text-muted-foreground/80">
+              Next: {formatNextExpectedTime(operatorStatus.nextExpectedAt)}
+            </div>
+          )}
+          {operatorStatus.lastProgressAt && (
+            <div className="text-[11px] text-muted-foreground/70">
+              Progress: {formatRelativeOperatorTime(operatorStatus.lastProgressAt)}
+            </div>
+          )}
 
           {/* Token Usage */}
           {session.tokens !== '-' && (

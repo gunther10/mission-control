@@ -1,7 +1,15 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { Button } from '@/components/ui/button'
 import { PipelineTab } from './pipeline-tab'
+import { useMissionControl } from '@/store'
+import {
+  formatNextExpectedTime,
+  formatRelativeOperatorTime,
+  getOperatorToneClasses,
+  summarizeOperatorStatus,
+} from '@/lib/operator-status'
 
 interface Agent {
   id: number
@@ -40,6 +48,7 @@ const emptyForm: TemplateFormData = {
 }
 
 export function OrchestrationBar() {
+  const { sessions, connection, execApprovals, spawnRequests, cronJobs } = useMissionControl()
   const [agents, setAgents] = useState<Agent[]>([])
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([])
   const [activeTab, setActiveTab] = useState<'command' | 'templates' | 'pipelines' | 'fleet'>('command')
@@ -221,19 +230,58 @@ export function OrchestrationBar() {
   const onlineCount = agents.filter(a => a.status === 'idle' || a.status === 'busy').length
   const busyCount = agents.filter(a => a.status === 'busy').length
   const errorCount = agents.filter(a => a.status === 'error').length
+  const operatorSummary = summarizeOperatorStatus({
+    sessions: sessions as any,
+    connection,
+    execApprovals,
+    spawnRequests,
+    cronJobs,
+  })
 
   return (
     <div className="border-b border-border bg-card/50">
+      <div className="grid gap-2 px-4 pt-3 pb-2 md:grid-cols-5">
+        <div className="rounded-lg border border-border bg-background/70 px-3 py-2">
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Gateway</div>
+          <div className={`inline-flex px-2 py-1 rounded-full border text-xs font-medium ${getOperatorToneClasses(operatorSummary.connectionStatus.tone)}`}>
+            {operatorSummary.connectionStatus.label}
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground line-clamp-2">{operatorSummary.connectionStatus.reason}</div>
+        </div>
+        <div className="rounded-lg border border-border bg-background/70 px-3 py-2">
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Active runs</div>
+          <div className="text-xl font-semibold text-foreground">{operatorSummary.running}</div>
+          <div className="text-xs text-muted-foreground">sessions currently making progress</div>
+        </div>
+        <div className="rounded-lg border border-border bg-background/70 px-3 py-2">
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Waiting on you</div>
+          <div className="text-xl font-semibold text-foreground">{operatorSummary.waitingOnYou}</div>
+          <div className="text-xs text-muted-foreground">replies and approvals</div>
+        </div>
+        <div className="rounded-lg border border-border bg-background/70 px-3 py-2">
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Blocked</div>
+          <div className="text-xl font-semibold text-foreground">{operatorSummary.blocked}</div>
+          <div className="text-xs text-muted-foreground">blocked, failed, or reconnecting</div>
+        </div>
+        <div className="rounded-lg border border-border bg-background/70 px-3 py-2">
+          <div className="text-[10px] uppercase tracking-wide text-muted-foreground mb-1">Next / last</div>
+          <div className="text-xs text-foreground">Next: {formatNextExpectedTime(operatorSummary.nextExpectedAt)}</div>
+          <div className="text-xs text-muted-foreground mt-1">Last event: {formatRelativeOperatorTime(operatorSummary.lastEventAt)}</div>
+        </div>
+      </div>
+
       {/* Tab bar */}
       <div className="flex items-center gap-1 px-4 pt-2">
         {(['command', 'templates', 'pipelines', 'fleet'] as const).map(tab => (
-          <button
+          <Button
             key={tab}
             onClick={() => setActiveTab(tab)}
-            className={`px-3 py-1.5 text-xs font-medium rounded-t-md transition-smooth ${
+            variant="ghost"
+            size="sm"
+            className={`rounded-t-md rounded-b-none ${
               activeTab === tab
                 ? 'bg-secondary text-foreground border border-border border-b-transparent'
-                : 'text-muted-foreground hover:text-foreground'
+                : ''
             }`}
           >
             {tab === 'command' ? 'Command' : tab === 'templates' ? 'Workflows' : tab === 'pipelines' ? 'Pipelines' : 'Fleet'}
@@ -242,7 +290,7 @@ export function OrchestrationBar() {
                 {onlineCount}/{agents.length}
               </span>
             )}
-          </button>
+          </Button>
         ))}
 
         {/* Result toast inline */}
@@ -276,13 +324,12 @@ export function OrchestrationBar() {
               placeholder="Send command or message to agent..."
               className="flex-1 h-9 px-3 rounded-md bg-secondary border border-border text-sm text-foreground placeholder:text-muted-foreground"
             />
-            <button
+            <Button
               onClick={sendCommand}
               disabled={!selectedAgent || !message.trim() || sending}
-              className="h-9 px-4 rounded-md bg-primary text-primary-foreground text-sm font-medium disabled:opacity-50 hover:bg-primary/90 transition-smooth"
             >
               {sending ? '...' : 'Send'}
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -293,12 +340,13 @@ export function OrchestrationBar() {
           {templates.length === 0 && formMode === 'hidden' ? (
             <div className="text-center py-4">
               <p className="text-sm text-muted-foreground mb-2">No workflow templates yet</p>
-              <button
+              <Button
                 onClick={() => { setFormMode('create'); setEditingId(null); setTemplateForm({ ...emptyForm }) }}
-                className="text-sm text-primary hover:underline"
+                variant="link"
+                size="sm"
               >
                 Create your first template
-              </button>
+              </Button>
             </div>
           ) : (
             <>
@@ -311,34 +359,39 @@ export function OrchestrationBar() {
                   {allTags.length > 0 && (
                     <div className="flex items-center gap-1">
                       {filterTag && (
-                        <button
+                        <Button
                           onClick={() => setFilterTag(null)}
-                          className="text-2xs px-1.5 py-0.5 rounded bg-primary/20 text-primary hover:bg-primary/30"
+                          variant="ghost"
+                          size="xs"
+                          className="text-2xs h-auto px-1.5 py-0.5 bg-primary/20 text-primary hover:bg-primary/30"
                         >
                           {filterTag} x
-                        </button>
+                        </Button>
                       )}
                       {!filterTag && allTags.slice(0, 5).map(tag => (
-                        <button
+                        <Button
                           key={tag}
                           onClick={() => setFilterTag(tag)}
-                          className="text-2xs px-1.5 py-0.5 rounded bg-secondary text-muted-foreground hover:text-foreground hover:bg-secondary/80"
+                          variant="secondary"
+                          size="xs"
+                          className="text-2xs h-auto px-1.5 py-0.5"
                         >
                           {tag}
-                        </button>
+                        </Button>
                       ))}
                     </div>
                   )}
                 </div>
-                <button
+                <Button
                   onClick={() => {
                     if (formMode !== 'hidden') closeForm()
                     else { setFormMode('create'); setTemplateForm({ ...emptyForm }) }
                   }}
-                  className="text-xs text-primary hover:underline"
+                  variant="link"
+                  size="xs"
                 >
                   {formMode !== 'hidden' ? 'Cancel' : '+ New'}
-                </button>
+                </Button>
               </div>
 
               {/* Create/Edit Form */}
@@ -385,7 +438,7 @@ export function OrchestrationBar() {
                       {templateForm.tags.map(tag => (
                         <span key={tag} className="inline-flex items-center gap-0.5 text-2xs px-1.5 py-0.5 rounded bg-primary/20 text-primary">
                           {tag}
-                          <button onClick={() => removeTag(tag)} className="hover:text-primary/70">x</button>
+                          <Button variant="ghost" size="xs" onClick={() => removeTag(tag)} className="hover:text-primary/70 h-auto p-0 min-w-0">x</Button>
                         </span>
                       ))}
                       <input
@@ -414,13 +467,13 @@ export function OrchestrationBar() {
                         <option value={3600}>1 hour</option>
                       </select>
                     </div>
-                    <button
+                    <Button
                       onClick={saveTemplate}
                       disabled={!templateForm.name || !templateForm.task_prompt}
-                      className="h-7 px-3 rounded-md bg-primary text-primary-foreground text-xs font-medium disabled:opacity-50"
+                      size="xs"
                     >
                       {formMode === 'edit' ? 'Update' : 'Save'}
-                    </button>
+                    </Button>
                   </div>
                 </div>
               )}
@@ -430,9 +483,10 @@ export function OrchestrationBar() {
                 {filteredTemplates.map(t => (
                   <div key={t.id} className="rounded-md bg-secondary/30 hover:bg-secondary/50 transition-smooth group">
                     <div className="flex items-center gap-2 p-2">
-                      <button
+                      <Button
+                        variant="ghost"
                         onClick={() => setExpandedId(expandedId === t.id ? null : t.id)}
-                        className="flex-1 min-w-0 text-left"
+                        className="flex-1 min-w-0 text-left h-auto p-0 rounded-none"
                       >
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-medium text-foreground truncate">{t.name}</span>
@@ -445,44 +499,47 @@ export function OrchestrationBar() {
                           ))}
                         </div>
                         <p className="text-xs text-muted-foreground truncate">{t.description || t.task_prompt}</p>
-                      </button>
+                      </Button>
                       <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-smooth shrink-0">
-                        <button
+                        <Button
                           onClick={() => executeTemplate(t)}
                           disabled={spawning === t.id}
-                          className="h-7 px-2 rounded-md bg-primary text-primary-foreground text-xs font-medium disabled:opacity-50"
+                          size="xs"
                           title="Run"
                         >
                           {spawning === t.id ? '...' : 'Run'}
-                        </button>
-                        <button
+                        </Button>
+                        <Button
                           onClick={() => startEdit(t)}
-                          className="h-7 px-1.5 rounded-md bg-secondary text-foreground text-xs hover:bg-secondary/80"
+                          variant="secondary"
+                          size="icon-xs"
                           title="Edit"
                         >
                           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-3.5 h-3.5">
                             <path d="M11.5 1.5l3 3-9 9H2.5v-3z" strokeLinecap="round" strokeLinejoin="round" />
                           </svg>
-                        </button>
-                        <button
+                        </Button>
+                        <Button
                           onClick={() => duplicateTemplate(t)}
-                          className="h-7 px-1.5 rounded-md bg-secondary text-foreground text-xs hover:bg-secondary/80"
+                          variant="secondary"
+                          size="icon-xs"
                           title="Duplicate"
                         >
                           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-3.5 h-3.5">
                             <rect x="5" y="5" width="9" height="9" rx="1" strokeLinecap="round" strokeLinejoin="round" />
                             <path d="M3 11V3a1 1 0 011-1h8" strokeLinecap="round" strokeLinejoin="round" />
                           </svg>
-                        </button>
-                        <button
+                        </Button>
+                        <Button
                           onClick={() => deleteTemplate(t.id)}
-                          className="h-7 px-1.5 rounded-md bg-destructive/20 text-destructive text-xs hover:bg-destructive/30"
+                          variant="destructive"
+                          size="icon-xs"
                           title="Delete"
                         >
                           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" className="w-3.5 h-3.5">
                             <path d="M4 4l8 8M12 4l-8 8" strokeLinecap="round" />
                           </svg>
-                        </button>
+                        </Button>
                       </div>
                     </div>
 
