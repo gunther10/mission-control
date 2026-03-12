@@ -3,8 +3,8 @@ import { formatOperatorSnapshotTelegramMessage } from '@/lib/operator-status-tel
 import type { OperatorSnapshot } from '@/lib/operator-snapshot'
 
 describe('formatOperatorSnapshotTelegramMessage', () => {
-  it('renders a compact HTML-safe status card', () => {
-    const snapshot: OperatorSnapshot = {
+  it('renders a compact HTML-safe operator-truth status', () => {
+    const snapshot = {
       generatedAt: Date.UTC(2026, 2, 12, 22, 15),
       summary: {
         waitingOnYou: 1,
@@ -46,14 +46,15 @@ describe('formatOperatorSnapshotTelegramMessage', () => {
         pendingApprovals: 0,
         spawnRequestsTracked: 0,
       },
-    } as OperatorSnapshot
+    } as unknown as OperatorSnapshot
 
-    const message = formatOperatorSnapshotTelegramMessage(snapshot)
-    expect(message).toContain('Mission Control status')
-    expect(message).toContain('Waiting &lt;now&gt;')
-    expect(message).toContain('Need &amp; reply')
+    const message = formatOperatorSnapshotTelegramMessage(snapshot, { now: Date.UTC(2026, 2, 12, 22, 20) })
+    expect(message).toContain('MC 22:20')
+    expect(message).toContain('Waiting &lt;now&gt; · run 3 · wait 1 · block 2')
     expect(message).toContain('Fix &lt;pin&gt;')
-    expect(message).toContain('A &lt; B')
-    expect(message).toContain('agent &amp; one')
+    expect(message).toContain('Need approval &amp; signoff')
+    expect(message).toContain('Age: —')
+    expect(message).toContain('Updated: 5m')
+    expect(message).toContain('Action: Need &amp; reply')
   })
 })

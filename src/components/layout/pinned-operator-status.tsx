@@ -3,12 +3,10 @@
 import { Button } from '@/components/ui/button'
 import { useMissionControl } from '@/store'
 import {
-  deriveSessionOperatorStatus,
-  deriveTaskOperatorStatus,
+  buildPinnedOperatorSnapshot,
   formatNextExpectedTime,
   formatRelativeOperatorTime,
   getOperatorToneClasses,
-  summarizeOperatorStatus,
 } from '@/lib/operator-status'
 import { useNavigateToPanel, usePrefetchPanel } from '@/lib/navigation'
 
@@ -17,80 +15,16 @@ export function PinnedOperatorStatus() {
   const navigateToPanel = useNavigateToPanel()
   const prefetchPanel = usePrefetchPanel()
 
-  const summary = summarizeOperatorStatus({
+  const snapshot = buildPinnedOperatorSnapshot({
     sessions: sessions as any,
+    tasks: tasks as any,
     connection,
     execApprovals,
     spawnRequests,
     cronJobs,
   })
 
-  const taskStatuses = tasks.map((task) => ({
-    task,
-    status: deriveTaskOperatorStatus({
-      task: task as any,
-      sessions: sessions as any,
-      connection,
-      execApprovals,
-      spawnRequests,
-      cronJobs,
-    }),
-  }))
-
-  const sessionStatuses = sessions.map((session) => ({
-    session,
-    status: deriveSessionOperatorStatus({
-      session: session as any,
-      connection,
-      execApprovals,
-      spawnRequests,
-      cronJobs,
-    }),
-  }))
-
-  const topTask =
-    taskStatuses.find(({ status }) => status.state === 'waiting_for_human' || status.state === 'waiting_for_approval') ||
-    taskStatuses.find(({ status }) => status.state === 'blocked' || status.state === 'failed' || status.state === 'reconnecting') ||
-    taskStatuses.find(({ status }) => status.state === 'running')
-
-  const topSession =
-    sessionStatuses.find(({ status }) => status.state === 'waiting_for_human' || status.state === 'waiting_for_approval') ||
-    sessionStatuses.find(({ status }) => status.state === 'blocked' || status.state === 'failed' || status.state === 'reconnecting') ||
-    sessionStatuses.find(({ status }) => status.state === 'running')
-
-  const headline = summary.waitingOnYou > 0
-    ? 'Waiting on you'
-    : summary.blocked > 0
-      ? 'Blocked work exists'
-      : summary.running > 0
-        ? 'Work is running'
-        : 'No active blockers'
-
-  const reason = summary.waitingOnYou > 0
-    ? `${summary.waitingOnYou} item${summary.waitingOnYou === 1 ? '' : 's'} need your reply or approval`
-    : summary.blocked > 0
-      ? `${summary.blocked} item${summary.blocked === 1 ? '' : 's'} are blocked, failed, or reconnecting`
-      : summary.running > 0
-        ? `${summary.running} active run${summary.running === 1 ? '' : 's'} currently making progress`
-        : summary.connectionStatus.reason
-
-  const focusLabel = topTask
-    ? `Task • ${topTask.task.title}`
-    : topSession
-      ? `Session • ${topSession.session.label || topSession.session.key}`
-      : 'System'
-
-  const focusStatus = topTask?.status || topSession?.status || summary.connectionStatus
-  const actionHint = focusStatus.actionRequired || (summary.waitingOnYou > 0 ? 'Open the relevant panel and unblock it.' : 'No action needed right now.')
-  const actionTarget = topTask
-    ? 'tasks'
-    : topSession
-      ? 'chat'
-      : summary.waitingOnYou > 0
-        ? 'notifications'
-        : summary.blocked > 0
-          ? 'chat'
-          : 'overview'
+  const { summary, headline, reason, focusLabel, focusStatus, actionHint, actionTarget } = snapshot
 
   return (
     <section className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80">

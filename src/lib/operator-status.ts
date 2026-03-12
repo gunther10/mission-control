@@ -22,6 +22,21 @@ export interface OperatorStatus {
   actionRequired?: string
 }
 
+export interface OperatorStatusSnapshot {
+  generatedAt: number
+  refreshEveryMs: number
+  headline: string
+  reason: string
+  focusLabel: string
+  focusKind: 'task' | 'session' | 'system'
+  focusStatus: OperatorStatus
+  actionHint: string
+  actionTarget: 'tasks' | 'chat' | 'notifications' | 'overview'
+  summary: ReturnType<typeof summarizeOperatorStatus>
+}
+
+const OPERATOR_STATUS_REFRESH_EVERY_MS = 5 * 60 * 1000
+
 function matchSessionRef(session: Session, ref?: string | null) {
   if (!ref) return false
   return ref === session.id || ref === session.key || session.key.includes(ref) || ref.includes(session.key)
@@ -83,6 +98,33 @@ export function formatNextExpectedTime(timestamp?: number) {
   if (absMinutes < 60) return `${absMinutes}m ago`
   const hours = Math.round(absMinutes / 60)
   return `${hours}h ago`
+}
+
+function formatCompactRelative(deltaMs: number) {
+  const absMs = Math.max(0, Math.abs(deltaMs))
+  const minutes = Math.floor(absMs / 60000)
+  if (minutes < 1) return '0m'
+  if (minutes < 60) return `${minutes}m`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h`
+  const days = Math.floor(hours / 24)
+  return `${days}d`
+}
+
+function formatClock(timestamp: number) {
+  return new Intl.DateTimeFormat('en-GB', {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'UTC',
+  }).format(timestamp)
+}
+
+export function getOperatorHeartbeatEmoji(snapshot: Pick<OperatorStatusSnapshot, 'summary' | 'focusStatus'>) {
+  if (snapshot.focusStatus.state === 'waiting_for_human' || snapshot.focusStatus.state === 'waiting_for_approval' || snapshot.summary.waitingOnYou > 0) return '🔵'
+  if (snapshot.focusStatus.state === 'blocked' || snapshot.focusStatus.state === 'failed' || snapshot.focusStatus.state === 'reconnecting' || snapshot.summary.blocked > 0) return '🟠'
+  if (snapshot.focusStatus.state === 'running' || snapshot.summary.running > 0) return '🟢'
+  return '⚪'
 }
 
 export function deriveConnectionOperatorStatus(connection: ConnectionStatus): OperatorStatus {
@@ -353,4 +395,124 @@ export function summarizeOperatorStatus(args: {
     lastEventAt,
     pendingApprovals: execApprovals.filter((approval) => approval.status === 'pending').length,
   }
+}
+
+export function buildPinnedOperatorSnapshot(args: {
+  sessions: Session[]
+  tasks: Task[]
+  connection: ConnectionStatus
+  execApprovals: ExecApprovalRequest[]
+  spawnRequests: SpawnRequest[]
+  cronJobs?: CronJob[]
+  now?: number
+}): OperatorStatusSnapshot {
+  const { sessions, tasks, connection, execApprovals, spawnRequests, cronJobs = [], now = Date.now() } = args
+
+  const summary = summarizeOperatorStatus({
+    sessions,
+    connection,
+    execApprovals,
+    spawnRequests,
+    cronJobs,
+  })
+
+  const taskStatuses = tasks.map((task) => ({
+    task,
+    status: deriveTaskOperatorStatus({
+      task: task as any,
+      sessions: sessions as any,
+      connection,
+      execApprovals,
+      spawnRequests,
+      cronJobs,
+    }),
+  }))
+
+  const sessionStatuses = sessions.map((session) => ({
+    session,
+    status: deriveSessionOperatorStatus({
+      session: session as any,
+      connection,
+      execApprovals,
+      spawnRequests,
+      cronJobs,
+    }),
+  }))
+
+  const topTask =
+    taskStatuses.find(({ status }) => status.state === 'waiting_for_human' || status.state === 'waiting_for_approval') ||
+    taskStatuses.find(({ status }) => status.state === 'blocked' || status.state === 'failed' || status.state === 'reconnecting') ||
+    taskStatuses.find(({ status }) => status.state === 'running')
+
+  const topSession =
+    sessionStatuses.find(({ status }) => status.state === 'waiting_for_human' || status.state === 'waiting_for_approval') ||
+    sessionStatuses.find(({ status }) => status.state === 'blocked' || status.state === 'failed' || status.state === 'reconnecting') ||
+    sessionStatuses.find(({ status }) => status.state === 'running')
+
+  const priorityStatus = topTask?.status || topSession?.status
+
+  const headline = priorityStatus?.state === 'waiting_for_human' || priorityStatus?.state === 'waiting_for_approval'
+    ? 'Waiting on you'
+    : priorityStatus?.state === 'blocked' || priorityStatus?.state === 'failed' || priorityStatus?.state === 'reconnecting'
+      ? 'Blocked work exists'
+      : priorityStatus?.state === 'running' || summary.running > 0
+        ? 'Work is running'
+        : 'No active blockers'
+
+  const reason = priorityStatus?.state === 'waiting_for_human' || priorityStatus?.state === 'waiting_for_approval'
+    ? priorityStatus.reason
+    : priorityStatus?.state === 'blocked' || priorityStatus?.state === 'failed' || priorityStatus?.state === 'reconnecting'
+      ? priorityStatus.reason
+      : priorityStatus?.state === 'running' || summary.running > 0
+        ? `${summary.running} active run${summary.running === 1 ? '' : 's'} currently making progress`
+        : summary.connectionStatus.reason
+
+  const focusLabel = topTask
+    ? `Task • ${topTask.task.title}`
+    : topSession
+      ? `Session • ${topSession.session.label || topSession.session.key}`
+      : 'System'
+
+  const focusKind = topTask ? 'task' : topSession ? 'session' : 'system'
+  const focusStatus = topTask?.status || topSession?.status || summary.connectionStatus
+  const actionHint = focusStatus.actionRequired || (summary.waitingOnYou > 0 ? 'Open the relevant panel and unblock it.' : 'No action needed right now.')
+  const actionTarget = topTask
+    ? 'tasks'
+    : topSession
+      ? 'chat'
+      : summary.waitingOnYou > 0
+        ? 'notifications'
+        : summary.blocked > 0
+          ? 'chat'
+          : 'overview'
+
+  return {
+    generatedAt: now,
+    refreshEveryMs: OPERATOR_STATUS_REFRESH_EVERY_MS,
+    headline,
+    reason,
+    focusLabel,
+    focusKind,
+    focusStatus,
+    actionHint,
+    actionTarget,
+    summary,
+  }
+}
+
+export function formatTelegramPinnedOperatorStatus(snapshot: OperatorStatusSnapshot, now = Date.now()) {
+  const emoji = getOperatorHeartbeatEmoji(snapshot)
+  const lastProgressAt = snapshot.focusStatus.lastProgressAt || snapshot.summary.lastEventAt
+  const age = lastProgressAt ? formatCompactRelative(now - lastProgressAt) : '—'
+  const updated = formatCompactRelative(now - snapshot.generatedAt)
+
+  const line1 = `${emoji} MC ${formatClock(now)} UTC`
+  const line2 = `${snapshot.headline} · run ${snapshot.summary.running} · wait ${snapshot.summary.waitingOnYou} · block ${snapshot.summary.blocked}`
+  const line3 = `${snapshot.focusLabel} — ${snapshot.focusStatus.label}`
+  const line4 = snapshot.focusStatus.reason
+  const next = snapshot.focusStatus.nextExpectedAt || snapshot.summary.nextExpectedAt
+  const line5 = `Next: ${formatNextExpectedTime(next)} · Age: ${age} · Updated: ${updated}`
+  const line6 = `Action: ${snapshot.actionHint}`
+
+  return [line1, line2, line3, line4, line5, line6].join('\n')
 }
