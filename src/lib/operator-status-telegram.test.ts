@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   formatOperatorSnapshotTelegramMessage,
+  resolveTelegramStatusBotToken,
   STATUS_STATE_PATH,
+  TELEGRAM_STATUS_ACCOUNT_KEY,
   TELEGRAM_STATUS_AGENT_KEY,
   TELEGRAM_STATUS_CHAT_ID,
 } from '@/lib/operator-status-telegram'
@@ -10,8 +12,25 @@ import type { OperatorSnapshot } from '@/lib/operator-snapshot'
 describe('formatOperatorSnapshotTelegramMessage', () => {
   it('uses the Chandler group binding state path', () => {
     expect(TELEGRAM_STATUS_AGENT_KEY).toBe('chandler')
+    expect(TELEGRAM_STATUS_ACCOUNT_KEY).toBe('chandler')
     expect(TELEGRAM_STATUS_CHAT_ID).toBe('-5289821512')
     expect(STATUS_STATE_PATH).toContain('telegram-status-state.chandler.-5289821512.json')
+  })
+
+  it('prefers Chandler\'s explicit bot token over global Telegram defaults', () => {
+    const previousChandler = process.env.CHANDLER_TELEGRAM_BOT_TOKEN
+    const previousStatus = process.env.MC_TELEGRAM_STATUS_BOT_TOKEN
+    const previousDefault = process.env.TELEGRAM_BOT_TOKEN
+
+    process.env.CHANDLER_TELEGRAM_BOT_TOKEN = 'chandler-token'
+    process.env.MC_TELEGRAM_STATUS_BOT_TOKEN = 'status-token'
+    process.env.TELEGRAM_BOT_TOKEN = 'default-token'
+
+    expect(resolveTelegramStatusBotToken()).toBe('chandler-token')
+
+    process.env.CHANDLER_TELEGRAM_BOT_TOKEN = previousChandler
+    process.env.MC_TELEGRAM_STATUS_BOT_TOKEN = previousStatus
+    process.env.TELEGRAM_BOT_TOKEN = previousDefault
   })
 
   it('renders a compact HTML-safe operator-truth status', () => {

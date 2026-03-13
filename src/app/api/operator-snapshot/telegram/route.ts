@@ -3,6 +3,7 @@ import { requireRole } from '@/lib/auth'
 import { logger } from '@/lib/logger'
 import {
   TELEGRAM_STATUS_AGENT_KEY,
+  TELEGRAM_STATUS_ACCOUNT_KEY,
   TELEGRAM_STATUS_CHAT_ID,
   TELEGRAM_STATUS_REFRESH_EVERY_MS,
   readTelegramStatusState,
@@ -32,6 +33,7 @@ export async function POST(request: NextRequest) {
       editSameMessage: result.editSameMessage,
       binding: {
         agentKey: TELEGRAM_STATUS_AGENT_KEY,
+        accountKey: TELEGRAM_STATUS_ACCOUNT_KEY,
         chatId: TELEGRAM_STATUS_CHAT_ID,
       },
     })
@@ -56,6 +58,7 @@ export async function GET(request: NextRequest) {
       editSameMessage: true,
       binding: {
         agentKey: TELEGRAM_STATUS_AGENT_KEY,
+        accountKey: TELEGRAM_STATUS_ACCOUNT_KEY,
         chatId: TELEGRAM_STATUS_CHAT_ID,
       },
     })

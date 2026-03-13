@@ -24,6 +24,7 @@ interface TelegramMessageResult {
 
 export const TELEGRAM_STATUS_REFRESH_EVERY_MS = 5 * 60 * 1000
 export const TELEGRAM_STATUS_AGENT_KEY = 'chandler'
+export const TELEGRAM_STATUS_ACCOUNT_KEY = 'chandler'
 export const TELEGRAM_STATUS_CHAT_ID = '-5289821512'
 
 function formatBindingSegment(value: string) {
@@ -42,8 +43,9 @@ export const STATUS_STATE_PATH = config.openclawStateDir
       `telegram-status-state.${formatBindingSegment(TELEGRAM_STATUS_AGENT_KEY)}.${formatBindingSegment(TELEGRAM_STATUS_CHAT_ID)}.json`,
     )
 
-function resolveBotToken() {
+export function resolveTelegramStatusBotToken() {
   return (
+    process.env.CHANDLER_TELEGRAM_BOT_TOKEN ||
     process.env.MC_TELEGRAM_STATUS_BOT_TOKEN ||
     process.env.TELEGRAM_BOT_TOKEN ||
     ''
@@ -174,8 +176,8 @@ function escapeHtml(value: string) {
 }
 
 async function telegramRequest<T>(method: string, body: Record<string, unknown>): Promise<T> {
-  const token = resolveBotToken()
-  if (!token) throw new Error('Telegram status bot token not configured (set MC_TELEGRAM_STATUS_BOT_TOKEN or TELEGRAM_BOT_TOKEN)')
+  const token = resolveTelegramStatusBotToken()
+  if (!token) throw new Error('Telegram status bot token not configured (set CHANDLER_TELEGRAM_BOT_TOKEN, MC_TELEGRAM_STATUS_BOT_TOKEN, or TELEGRAM_BOT_TOKEN)')
 
   const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
     method: 'POST',
