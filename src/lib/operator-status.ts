@@ -505,14 +505,17 @@ export function formatTelegramPinnedOperatorStatus(snapshot: OperatorStatusSnaps
   const lastProgressAt = snapshot.focusStatus.lastProgressAt || snapshot.summary.lastEventAt
   const age = lastProgressAt ? formatCompactRelative(now - lastProgressAt) : '—'
   const updated = formatCompactRelative(now - snapshot.generatedAt)
+  const next = snapshot.focusStatus.nextExpectedAt || snapshot.summary.nextExpectedAt
 
   const line1 = `${emoji} MC ${formatClock(now)} UTC`
   const line2 = `${snapshot.headline} · run ${snapshot.summary.running} · wait ${snapshot.summary.waitingOnYou} · block ${snapshot.summary.blocked}`
   const line3 = `${snapshot.focusLabel} — ${snapshot.focusStatus.label}`
-  const line4 = snapshot.focusStatus.reason
-  const next = snapshot.focusStatus.nextExpectedAt || snapshot.summary.nextExpectedAt
-  const line5 = `Next: ${formatNextExpectedTime(next)} · Age: ${age} · Updated: ${updated}`
-  const line6 = `Action: ${snapshot.actionHint}`
+  const line4 = `Why: ${snapshot.focusStatus.reason}`
+  const line5 = `Need: ${snapshot.focusStatus.actionRequired || snapshot.reason}`
+  const line6 = `Time: age ${age} · next ${formatNextExpectedTime(next)} · upd ${updated}`
+  const line7 = 'Just done: —'
+  const line8 = `Doing correctly: • ${snapshot.headline}`
+  const line9 = `Next: • ${snapshot.actionHint}`
 
-  return [line1, line2, line3, line4, line5, line6].join('\n')
+  return [line1, line2, line3, line4, line5, line6, line7, line8, line9].join('\n')
 }
