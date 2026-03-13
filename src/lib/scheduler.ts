@@ -11,6 +11,12 @@ import { syncSkillsFromDisk } from './skill-sync'
 import { syncLocalAgents } from './local-agent-sync'
 import { dispatchAssignedTasks, runAegisReviews } from './task-dispatch'
 import { spawnRecurringTasks } from './recurring-tasks'
+import {
+  readTelegramStatusState,
+  resolveTelegramStatusBotToken,
+  shouldRefreshTelegramStatus,
+  syncOperatorSnapshotToTelegram,
+} from './operator-status-telegram'
 
 const BACKUP_DIR = join(dirname(config.dbPath), 'backups')
 
@@ -212,6 +218,31 @@ async function runHeartbeatCheck(): Promise<{ ok: boolean; message: string }> {
   }
 }
 
+async function runTelegramStatusRefresh(): Promise<{ ok: boolean; message: string }> {
+  try {
+    if (!resolveTelegramStatusBotToken()) {
+      return { ok: true, message: 'Telegram status bot token not configured; skipping refresh' }
+    }
+
+    const state = await readTelegramStatusState()
+    if (!shouldRefreshTelegramStatus(state)) {
+      return { ok: true, message: 'Telegram status refresh not due yet' }
+    }
+
+    const result = await syncOperatorSnapshotToTelegram({
+      workspaceId: 1,
+      pin: true,
+    })
+
+    return {
+      ok: true,
+      message: `Telegram status ${result.mode} for chat ${result.state.chatId} message ${result.state.messageId}`,
+    }
+  } catch (err: any) {
+    return { ok: false, message: `Telegram status refresh failed: ${err.message}` }
+  }
+}
+
 const DAILY_MS = 24 * 60 * 60 * 1000
 const FIVE_MINUTES_MS = 5 * 60 * 1000
 const TICK_MS = 60 * 1000 // Check every minute
@@ -330,9 +361,18 @@ export function initScheduler() {
     running: false,
   })
 
+  tasks.set('telegram_status_refresh', {
+    name: 'Telegram Status Refresh',
+    intervalMs: TICK_MS, // Every 60s — refreshes only when the 5m window is due
+    lastRun: null,
+    nextRun: now + 25_000, // First check shortly after startup
+    enabled: true,
+    running: false,
+  })
+
   // Start the tick loop
   tickInterval = setInterval(tick, TICK_MS)
-  logger.info('Scheduler initialized - backup at ~3AM, cleanup at ~4AM, heartbeat every 5m, webhook/claude/skill/local-agent/gateway-agent sync every 60s')
+  logger.info('Scheduler initialized - backup at ~3AM, cleanup at ~4AM, heartbeat every 5m, webhook/claude/skill/local-agent/gateway-agent/telegram-status sync every 60s')
 }
 
 /** Calculate ms until next occurrence of a given hour (UTC) */
@@ -364,8 +404,9 @@ async function tick() {
       : id === 'task_dispatch' ? 'general.task_dispatch'
       : id === 'aegis_review' ? 'general.aegis_review'
       : id === 'recurring_task_spawn' ? 'general.recurring_task_spawn'
+      : id === 'telegram_status_refresh' ? 'general.telegram_status_refresh'
       : 'general.agent_heartbeat'
-    const defaultEnabled = id === 'agent_heartbeat' || id === 'webhook_retry' || id === 'claude_session_scan' || id === 'skill_sync' || id === 'local_agent_sync' || id === 'gateway_agent_sync' || id === 'task_dispatch' || id === 'aegis_review' || id === 'recurring_task_spawn'
+    const defaultEnabled = id === 'agent_heartbeat' || id === 'webhook_retry' || id === 'claude_session_scan' || id === 'skill_sync' || id === 'local_agent_sync' || id === 'gateway_agent_sync' || id === 'task_dispatch' || id === 'aegis_review' || id === 'recurring_task_spawn' || id === 'telegram_status_refresh'
     if (!isSettingEnabled(settingKey, defaultEnabled)) continue
 
     task.running = true
@@ -380,6 +421,7 @@ async function tick() {
         : id === 'task_dispatch' ? await dispatchAssignedTasks()
         : id === 'aegis_review' ? await runAegisReviews()
         : id === 'recurring_task_spawn' ? await spawnRecurringTasks()
+        : id === 'telegram_status_refresh' ? await runTelegramStatusRefresh()
         : await runCleanup()
       task.lastResult = { ...result, timestamp: now }
     } catch (err: any) {
@@ -415,8 +457,9 @@ export function getSchedulerStatus() {
       : id === 'task_dispatch' ? 'general.task_dispatch'
       : id === 'aegis_review' ? 'general.aegis_review'
       : id === 'recurring_task_spawn' ? 'general.recurring_task_spawn'
+      : id === 'telegram_status_refresh' ? 'general.telegram_status_refresh'
       : 'general.agent_heartbeat'
-    const defaultEnabled = id === 'agent_heartbeat' || id === 'webhook_retry' || id === 'claude_session_scan' || id === 'skill_sync' || id === 'local_agent_sync' || id === 'gateway_agent_sync' || id === 'task_dispatch' || id === 'aegis_review' || id === 'recurring_task_spawn'
+    const defaultEnabled = id === 'agent_heartbeat' || id === 'webhook_retry' || id === 'claude_session_scan' || id === 'skill_sync' || id === 'local_agent_sync' || id === 'gateway_agent_sync' || id === 'task_dispatch' || id === 'aegis_review' || id === 'recurring_task_spawn' || id === 'telegram_status_refresh'
     result.push({
       id,
       name: task.name,
@@ -444,6 +487,7 @@ export async function triggerTask(taskId: string): Promise<{ ok: boolean; messag
   if (taskId === 'task_dispatch') return dispatchAssignedTasks()
   if (taskId === 'aegis_review') return runAegisReviews()
   if (taskId === 'recurring_task_spawn') return spawnRecurringTasks()
+  if (taskId === 'telegram_status_refresh') return runTelegramStatusRefresh()
   return { ok: false, message: `Unknown task: ${taskId}` }
 }
 

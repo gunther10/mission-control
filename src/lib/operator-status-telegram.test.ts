@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   formatOperatorSnapshotTelegramMessage,
   resolveTelegramStatusBotToken,
+  shouldRefreshTelegramStatus,
   STATUS_STATE_PATH,
   TELEGRAM_STATUS_ACCOUNT_KEY,
   TELEGRAM_STATUS_AGENT_KEY,
@@ -86,5 +87,27 @@ describe('formatOperatorSnapshotTelegramMessage', () => {
     expect(message).toContain('Age: —')
     expect(message).toContain('Updated: 5m')
     expect(message).toContain('Action: Need &amp; reply')
+  })
+
+  it('treats the telegram status message as due every five minutes', () => {
+    const now = Date.UTC(2026, 2, 12, 22, 20)
+
+    expect(shouldRefreshTelegramStatus(null, now)).toBe(true)
+    expect(
+      shouldRefreshTelegramStatus({
+        agentKey: TELEGRAM_STATUS_AGENT_KEY,
+        chatId: TELEGRAM_STATUS_CHAT_ID,
+        messageId: 4247,
+        lastSyncedAt: now - (5 * 60 * 1000) + 1,
+      }, now),
+    ).toBe(false)
+    expect(
+      shouldRefreshTelegramStatus({
+        agentKey: TELEGRAM_STATUS_AGENT_KEY,
+        chatId: TELEGRAM_STATUS_CHAT_ID,
+        messageId: 4247,
+        lastSyncedAt: now - (5 * 60 * 1000),
+      }, now),
+    ).toBe(true)
   })
 })
