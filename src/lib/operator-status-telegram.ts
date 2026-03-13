@@ -4,6 +4,7 @@ import { buildOperatorSnapshot, type OperatorSnapshot } from '@/lib/operator-sna
 import { config } from '@/lib/config'
 
 export interface TelegramStatusState {
+  agentKey: string
   chatId: string
   messageId: number
   pinnedAt?: number
@@ -22,10 +23,24 @@ interface TelegramMessageResult {
 }
 
 export const TELEGRAM_STATUS_REFRESH_EVERY_MS = 5 * 60 * 1000
+export const TELEGRAM_STATUS_AGENT_KEY = 'chandler'
+export const TELEGRAM_STATUS_CHAT_ID = '-5289821512'
 
-const STATUS_STATE_PATH = config.openclawStateDir
-  ? path.join(config.openclawStateDir, 'mission-control', 'telegram-status-state.json')
-  : path.join(process.cwd(), '.data', 'telegram-status-state.json')
+function formatBindingSegment(value: string) {
+  return value.replace(/[^a-zA-Z0-9_-]+/g, '_')
+}
+
+export const STATUS_STATE_PATH = config.openclawStateDir
+  ? path.join(
+      config.openclawStateDir,
+      'mission-control',
+      `telegram-status-state.${formatBindingSegment(TELEGRAM_STATUS_AGENT_KEY)}.${formatBindingSegment(TELEGRAM_STATUS_CHAT_ID)}.json`,
+    )
+  : path.join(
+      process.cwd(),
+      '.data',
+      `telegram-status-state.${formatBindingSegment(TELEGRAM_STATUS_AGENT_KEY)}.${formatBindingSegment(TELEGRAM_STATUS_CHAT_ID)}.json`,
+    )
 
 function resolveBotToken() {
   return (
@@ -35,8 +50,8 @@ function resolveBotToken() {
   ).trim()
 }
 
-function resolveDefaultChatId() {
-  return (process.env.MC_TELEGRAM_STATUS_CHAT_ID || '').trim()
+function resolveBoundChatId() {
+  return TELEGRAM_STATUS_CHAT_ID
 }
 
 function resolveDefaultPin() {
@@ -50,6 +65,7 @@ export async function readTelegramStatusState(): Promise<TelegramStatusState | n
     const parsed = JSON.parse(raw) as Partial<TelegramStatusState>
     if (!parsed.chatId || typeof parsed.messageId !== 'number') return null
     return {
+      agentKey: String(parsed.agentKey || TELEGRAM_STATUS_AGENT_KEY),
       chatId: String(parsed.chatId),
       messageId: parsed.messageId,
       pinnedAt: typeof parsed.pinnedAt === 'number' ? parsed.pinnedAt : undefined,
@@ -187,20 +203,19 @@ export function shouldRefreshTelegramStatus(state: TelegramStatusState | null, n
 
 export async function syncOperatorSnapshotToTelegram(options?: {
   workspaceId?: number
-  chatId?: string
   pin?: boolean
 }) {
   const workspaceId = options?.workspaceId ?? 1
   const snapshot = await buildOperatorSnapshot(workspaceId)
   const text = formatOperatorSnapshotTelegramMessage(snapshot)
   const existingState = await readTelegramStatusState()
-  const chatId = (options?.chatId || existingState?.chatId || resolveDefaultChatId()).trim()
+  const chatId = resolveBoundChatId().trim()
   if (!chatId) {
-    throw new Error('Telegram status chat id not configured (set MC_TELEGRAM_STATUS_CHAT_ID, pass chatId, or bootstrap from existing state)')
+    throw new Error('Telegram status chat binding is empty')
   }
 
   const shouldPin = options?.pin ?? resolveDefaultPin()
-  let state = existingState && existingState.chatId === chatId ? existingState : null
+  let state = existingState && existingState.agentKey === TELEGRAM_STATUS_AGENT_KEY && existingState.chatId === chatId ? existingState : null
   let mode: 'edited' | 'created' = 'created'
 
   if (state?.messageId) {
@@ -227,6 +242,7 @@ export async function syncOperatorSnapshotToTelegram(options?: {
       disable_web_page_preview: true,
     })
     state = {
+      agentKey: TELEGRAM_STATUS_AGENT_KEY,
       chatId: String(created.chat?.id ?? chatId),
       messageId: created.message_id,
     }

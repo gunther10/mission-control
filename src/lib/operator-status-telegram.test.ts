@@ -1,8 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { formatOperatorSnapshotTelegramMessage } from '@/lib/operator-status-telegram'
+import {
+  formatOperatorSnapshotTelegramMessage,
+  STATUS_STATE_PATH,
+  TELEGRAM_STATUS_AGENT_KEY,
+  TELEGRAM_STATUS_CHAT_ID,
+} from '@/lib/operator-status-telegram'
 import type { OperatorSnapshot } from '@/lib/operator-snapshot'
 
 describe('formatOperatorSnapshotTelegramMessage', () => {
+  it('uses the Chandler group binding state path', () => {
+    expect(TELEGRAM_STATUS_AGENT_KEY).toBe('chandler')
+    expect(TELEGRAM_STATUS_CHAT_ID).toBe('-5289821512')
+    expect(STATUS_STATE_PATH).toContain('telegram-status-state.chandler.-5289821512.json')
+  })
+
   it('renders a compact HTML-safe operator-truth status', () => {
     const snapshot = {
       generatedAt: Date.UTC(2026, 2, 12, 22, 15),
