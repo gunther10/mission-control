@@ -33,6 +33,7 @@ const navGroups: NavGroup[] = [
       { id: 'chat', label: 'Chat', icon: <ChatIcon />, priority: false, essential: true },
       { id: 'channels', label: 'Channels', icon: <ChannelsIcon />, priority: false },
       { id: 'skills', label: 'Skills', icon: <SkillsIcon />, priority: false },
+      { id: 'documents', label: 'Documents', icon: <DocumentsIcon />, priority: false },
       { id: 'memory', label: 'Memory', icon: <MemoryIcon />, priority: false },
     ],
   },
@@ -1211,6 +1212,15 @@ function CronIcon() {
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="8" cy="8" r="6.5" />
       <path d="M8 4v4l2.5 2.5" />
+    </svg>
+  )
+}
+
+function DocumentsIcon() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M2.5 4.5A1.5 1.5 0 0 1 4 3h2l1 1.5h5A1.5 1.5 0 0 1 13.5 6v6A1.5 1.5 0 0 1 12 13.5H4A1.5 1.5 0 0 1 2.5 12z" />
+      <path d="M2.5 6.5h11" />
     </svg>
   )
 }

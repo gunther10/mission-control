@@ -273,7 +273,7 @@ export function DocumentsPanel() {
             <div className="space-y-1">
               {tree.length === 0 && (
                 <div className="text-sm text-muted-foreground">
-                  No supported docs roots found. Add one of: <code className="font-mono">docs</code>, <code className="font-mono">knowledge-base</code>, <code className="font-mono">knowledge</code>, <code className="font-mono">memory</code>.
+                  No document roots found. Documents now prefers multi-root browsing for OpenClaw paths like <code className="font-mono">openclaw-lab</code>, <code className="font-mono">.openclaw</code>, <code className="font-mono">workspace</code>, and <code className="font-mono">workspaces</code>, while still falling back to legacy docs roots.
                 </div>
               )}
               {tree.map((node) => renderNode(node))}
@@ -285,7 +285,7 @@ export function DocumentsPanel() {
           <div className="mb-4">
             <h3 className="text-base md:text-lg font-semibold text-foreground">Document Viewer</h3>
             <p className="text-xs text-muted-foreground mt-1">
-              Browse and inspect workspace docs from allowed roots.
+              Browse and inspect broader OpenClaw documents roots without widening the writable Memory browser.
             </p>
           </div>
 

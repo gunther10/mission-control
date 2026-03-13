@@ -1,10 +1,32 @@
 import { readdir, readFile, stat, lstat, realpath } from 'fs/promises'
 import { existsSync } from 'fs'
-import { dirname, join, sep } from 'path'
+import { basename, dirname, join, sep } from 'path'
 import { resolveWithin } from '@/lib/paths'
 import { config } from '@/lib/config'
 
 const DOC_ROOT_CANDIDATES = ['docs', 'knowledge-base', 'knowledge', 'memory', 'shared-memory', 'reports']
+
+interface DocsRoot {
+  name: string
+  path: string
+}
+
+export interface DocsTreeNode {
+  path: string
+  name: string
+  type: 'file' | 'directory'
+  size?: number
+  modified?: number
+  children?: DocsTreeNode[]
+}
+
+function normalizeRelativePath(value: string): string {
+  return String(value || '').replace(/\\/g, '/').replace(/^\/+/, '')
+}
+
+function normalizeAbsolutePath(value: string): string {
+  return String(value || '').trim().replace(/\\/g, '/').replace(/\/+$/, '')
+}
 
 function docsBaseDir(): string {
   return process.env.MISSION_CONTROL_DOCS_DIR || process.env.OPENCLAW_DOCS_DIR || config.memoryDir
@@ -19,17 +41,13 @@ function docsAllowedRootsFromEnv(baseDir: string): string[] {
     .filter((prefix) => existsSync(join(baseDir, prefix)))
 }
 
-export interface DocsTreeNode {
-  path: string
-  name: string
-  type: 'file' | 'directory'
-  size?: number
-  modified?: number
-  children?: DocsTreeNode[]
-}
-
-function normalizeRelativePath(value: string): string {
-  return String(value || '').replace(/\\/g, '/').replace(/^\/+/, '')
+function docsExtraRootsFromEnv(): string[] {
+  const raw = process.env.MISSION_CONTROL_DOCUMENTS_ROOTS || process.env.OPENCLAW_DOCUMENTS_ROOTS || ''
+  return raw
+    .split(',')
+    .map((part) => normalizeAbsolutePath(part))
+    .filter(Boolean)
+    .filter((rootPath) => existsSync(rootPath))
 }
 
 function isWithinBase(base: string, candidate: string): boolean {
@@ -69,38 +87,103 @@ async function resolveSafePath(baseDir: string, relativePath: string): Promise<s
   return fullPath
 }
 
-function allowedRoots(baseDir: string): string[] {
+function buildLegacyDocsRoots(): DocsRoot[] {
+  const baseDir = docsBaseDir()
+  if (!baseDir || !existsSync(baseDir)) return []
+
   const envRoots = docsAllowedRootsFromEnv(baseDir)
-  if (envRoots.length > 0) return envRoots
+  const relativeRoots = envRoots.length > 0
+    ? envRoots
+    : DOC_ROOT_CANDIDATES.filter((root) => existsSync(join(baseDir, root)))
 
-  const candidateRoots = DOC_ROOT_CANDIDATES.filter((root) => existsSync(join(baseDir, root)))
-  if (candidateRoots.length > 0) return candidateRoots
+  const fallbackRoots = relativeRoots.length > 0
+    ? relativeRoots
+    : (config.memoryAllowedPrefixes || [])
+      .map((prefix) => normalizeRelativePath(prefix).replace(/\/$/, ''))
+      .filter((prefix) => prefix.length > 0)
+      .filter((prefix) => existsSync(join(baseDir, prefix)))
 
-  const fromConfig = (config.memoryAllowedPrefixes || [])
-    .map((prefix) => normalizeRelativePath(prefix).replace(/\/$/, ''))
-    .filter((prefix) => prefix.length > 0)
-    .filter((prefix) => existsSync(join(baseDir, prefix)))
+  return fallbackRoots.map((root) => ({
+    name: root,
+    path: join(baseDir, root),
+  }))
+}
 
-  return fromConfig
+function buildPreferredDocsRoots(): DocsRoot[] {
+  const envRoots = docsExtraRootsFromEnv()
+  const preferred: Array<string | undefined> = envRoots.length > 0
+    ? envRoots
+    : [
+        join(config.homeDir, 'openclaw-lab'),
+        join(config.homeDir, 'OpenClaw Lab'),
+        config.openclawStateDir,
+        process.env.OPENCLAW_WORKSPACE_DIR || join(config.openclawStateDir, 'workspace'),
+        join(config.homeDir, 'workspaces'),
+      ]
+
+  return preferred
+    .map((rootPath) => normalizeAbsolutePath(rootPath || ''))
+    .filter(Boolean)
+    .filter((rootPath) => existsSync(rootPath))
+    .map((rootPath) => ({
+      name: basename(rootPath),
+      path: rootPath,
+    }))
+}
+
+function dedupeDocsRoots(roots: DocsRoot[]): DocsRoot[] {
+  const seenPaths = new Set<string>()
+  const seenNames = new Set<string>()
+  const deduped: DocsRoot[] = []
+
+  for (const root of roots) {
+    const normalizedPath = normalizeAbsolutePath(root.path)
+    if (!normalizedPath || seenPaths.has(normalizedPath)) continue
+
+    let name = normalizeRelativePath(root.name).replace(/\/$/, '') || basename(normalizedPath) || 'documents'
+    if (seenNames.has(name)) {
+      let counter = 2
+      while (seenNames.has(`${name}-${counter}`)) counter += 1
+      name = `${name}-${counter}`
+    }
+
+    seenPaths.add(normalizedPath)
+    seenNames.add(name)
+    deduped.push({ name, path: normalizedPath })
+  }
+
+  return deduped
+}
+
+function resolveDocsRoots(): DocsRoot[] {
+  return dedupeDocsRoots([
+    ...buildPreferredDocsRoots(),
+    ...buildLegacyDocsRoots(),
+  ])
+}
+
+function findDocsRootForPath(relativePath: string): { root: DocsRoot; subpath: string } | null {
+  const normalized = normalizeRelativePath(relativePath)
+  if (!normalized) return null
+
+  for (const root of resolveDocsRoots()) {
+    if (normalized === root.name) {
+      return { root, subpath: '' }
+    }
+    if (normalized.startsWith(`${root.name}/`)) {
+      return { root, subpath: normalized.slice(root.name.length + 1) }
+    }
+  }
+
+  return null
 }
 
 export function listDocsRoots(): string[] {
-  const baseDir = docsBaseDir()
-  if (!baseDir || !existsSync(baseDir)) return []
-  return allowedRoots(baseDir)
+  return resolveDocsRoots().map((root) => root.name)
 }
 
 export function isDocsPathAllowed(relativePath: string): boolean {
-  const normalized = normalizeRelativePath(relativePath)
-  if (!normalized) return false
-
-  const baseDir = docsBaseDir()
-  if (!baseDir || !existsSync(baseDir)) return false
-
-  const roots = allowedRoots(baseDir)
-  if (roots.length === 0) return false
-
-  return roots.some((root) => normalized === root || normalized.startsWith(`${root}/`))
+  return findDocsRootForPath(relativePath) !== null
 }
 
 async function buildTreeFrom(dirPath: string, relativeBase: string): Promise<DocsTreeNode[]> {
@@ -144,23 +227,19 @@ async function buildTreeFrom(dirPath: string, relativeBase: string): Promise<Doc
 }
 
 export async function getDocsTree(): Promise<DocsTreeNode[]> {
-  const baseDir = docsBaseDir()
-  if (!baseDir || !existsSync(baseDir)) return []
-
-  const roots = allowedRoots(baseDir)
+  const roots = resolveDocsRoots()
   const tree: DocsTreeNode[] = []
 
   for (const root of roots) {
-    const rootPath = join(baseDir, root)
     try {
-      const info = await stat(rootPath)
+      const info = await stat(root.path)
       if (!info.isDirectory()) continue
       tree.push({
-        path: root,
-        name: root,
+        path: root.name,
+        name: root.name,
         type: 'directory',
         modified: info.mtime.getTime(),
-        children: await buildTreeFrom(rootPath, root),
+        children: await buildTreeFrom(root.path, root.name),
       })
     } catch {
       // Ignore unreadable roots
@@ -171,16 +250,12 @@ export async function getDocsTree(): Promise<DocsTreeNode[]> {
 }
 
 export async function readDocsContent(relativePath: string): Promise<{ content: string; size: number; modified: number; path: string }> {
-  if (!isDocsPathAllowed(relativePath)) {
+  const match = findDocsRootForPath(relativePath)
+  if (!match) {
     throw new Error('Path not allowed')
   }
 
-  const baseDir = docsBaseDir()
-  if (!baseDir || !existsSync(baseDir)) {
-    throw new Error('Docs directory not configured')
-  }
-
-  const safePath = await resolveSafePath(baseDir, relativePath)
+  const safePath = await resolveSafePath(match.root.path, match.subpath)
   const content = await readFile(safePath, 'utf-8')
   const info = await stat(safePath)
 
@@ -197,10 +272,7 @@ function isSearchable(name: string): boolean {
 }
 
 export async function searchDocs(query: string, limit = 100): Promise<Array<{ path: string; name: string; matches: number }>> {
-  const baseDir = docsBaseDir()
-  if (!baseDir || !existsSync(baseDir)) return []
-
-  const roots = allowedRoots(baseDir)
+  const roots = resolveDocsRoots()
   if (roots.length === 0) return []
 
   const q = query.trim().toLowerCase()
@@ -246,9 +318,8 @@ export async function searchDocs(query: string, limit = 100): Promise<Array<{ pa
   }
 
   for (const root of roots) {
-    const rootPath = join(baseDir, root)
     try {
-      await searchDir(rootPath, root)
+      await searchDir(root.path, root.name)
     } catch {
       // Ignore unreadable roots
     }

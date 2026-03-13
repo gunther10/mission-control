@@ -31,6 +31,7 @@ const QUICK_NAV_COMMANDS: Array<{ panel: string; title: string; aliases: string[
   { panel: 'notifications', title: 'Go to Notifications', aliases: ['alerts inbox'] },
   { panel: 'tokens', title: 'Go to Token Usage', aliases: ['cost', 'spend'] },
   { panel: 'logs', title: 'Go to Logs', aliases: ['log viewer'] },
+  { panel: 'documents', title: 'Go to Documents', aliases: ['files', 'browser', 'openclaw lab'] },
   { panel: 'memory', title: 'Go to Memory Browser', aliases: ['knowledge', 'notes'] },
   { panel: 'integrations', title: 'Go to Integrations', aliases: ['providers', 'api keys'] },
   { panel: 'settings', title: 'Go to Settings', aliases: ['preferences', 'config'] },
