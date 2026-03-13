@@ -262,7 +262,7 @@ function chooseHeadline(summary: ReturnType<typeof summarizeOperatorStatus>) {
   if (summary.blocked > 0) {
     return {
       headline: 'Blocked work exists',
-      reason: `${summary.blocked} item${summary.blocked === 1 ? '' : 's'} are blocked, failed, or reconnecting`,
+      reason: `${summary.blocked} item${summary.blocked === 1 ? '' : 's'} need intervention, separate from transport hiccups`,
     }
   }
 
@@ -270,6 +270,13 @@ function chooseHeadline(summary: ReturnType<typeof summarizeOperatorStatus>) {
     return {
       headline: 'Work is running',
       reason: `${summary.running} active run${summary.running === 1 ? '' : 's'} currently making progress`,
+    }
+  }
+
+  if (summary.connectionStatus.state === 'reconnecting') {
+    return {
+      headline: 'Reconnecting',
+      reason: summary.connectionStatus.reason,
     }
   }
 
@@ -287,18 +294,23 @@ function prioritizeItems(items: OperatorSnapshotItem[]) {
         return 0
       case 'blocked':
       case 'failed':
-      case 'reconnecting':
         return 1
       case 'running':
         return 2
-      case 'waiting_for_schedule':
+      case 'reconnecting':
         return 3
-      case 'queued':
+      case 'waiting_for_schedule':
         return 4
+      case 'queued':
+        if (item.status.label === 'Ready') return 5
+        if (item.status.label === 'Queued') return 6
+        if (item.status.label === 'Needs clarification') return 7
+        if (item.status.label === 'Define first') return 8
+        return 9
       case 'completed':
-        return 5
+        return 10
       default:
-        return 6
+        return 11
     }
   }
 
@@ -372,7 +384,8 @@ export async function buildOperatorSnapshot(workspaceId: number): Promise<Operat
     }))
   )
 
-  const focus = taskItems[0] || sessionItems[0] || {
+  const preferredTaskFocus = taskItems.find((item) => item.status.label === 'Ready' || item.status.label === 'Queued')
+  const focus = sessionItems[0] || preferredTaskFocus || {
     kind: 'system' as const,
     id: 'connection',
     label: 'System',

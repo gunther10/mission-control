@@ -55,6 +55,104 @@ function lastProgressForSession(session: Session, connection: ConnectionStatus) 
   return session.lastActivity || session.startTime || connection.lastEventAt
 }
 
+function hasMeaningfulText(value: unknown, minLength = 12) {
+  if (typeof value !== 'string') return false
+  return value.replace(/\s+/g, ' ').trim().length >= minLength
+}
+
+function taskMetadata(task: Task) {
+  return ((task.metadata || {}) as Record<string, any>) || {}
+}
+
+function taskHasHumanClarificationSignal(task: Task) {
+  const metadata = taskMetadata(task)
+  return Boolean(
+    metadata.needs_clarification ||
+    metadata.needsClarification ||
+    metadata.waiting_on_human ||
+    metadata.waitingOnHuman ||
+    metadata.awaiting_reply ||
+    metadata.awaitingReply ||
+    metadata.awaiting_response ||
+    metadata.awaitingResponse ||
+    metadata.missing_context ||
+    metadata.missingContext
+  )
+}
+
+function taskHasDefinitionSignal(task: Task) {
+  const metadata = taskMetadata(task)
+  return Boolean(
+    metadata.definition_ready ||
+    metadata.definitionReady ||
+    metadata.defined ||
+    metadata.brief_ready ||
+    metadata.briefReady ||
+    metadata.ready_for_dispatch ||
+    metadata.readyForDispatch
+  )
+}
+
+function taskDefinitionScore(task: Task) {
+  const metadata = taskMetadata(task)
+  let score = 0
+
+  if (hasMeaningfulText(task.description, 24)) score += 2
+  if (Array.isArray(task.tags) && task.tags.length > 0) score += 1
+  if (task.assigned_to) score += 1
+  if (task.due_date) score += 1
+  if (task.project_id || task.project_name || task.project_prefix || task.ticket_ref) score += 1
+  if (taskHasDefinitionSignal(task)) score += 2
+  if (typeof metadata.acceptance_criteria === 'string' && hasMeaningfulText(metadata.acceptance_criteria, 20)) score += 2
+  if (Array.isArray(metadata.acceptance_criteria) && metadata.acceptance_criteria.length > 0) score += 2
+  if (typeof metadata.next_step === 'string' && hasMeaningfulText(metadata.next_step, 12)) score += 1
+  if (typeof metadata.prompt === 'string' && hasMeaningfulText(metadata.prompt, 20)) score += 1
+
+  return score
+}
+
+function taskNeedsDefinitionFirst(task: Task) {
+  if (task.status !== 'inbox') return false
+  if (taskHasHumanClarificationSignal(task)) return false
+  if (taskHasDefinitionSignal(task)) return false
+  return taskDefinitionScore(task) < 3
+}
+
+function taskIsReady(task: Task) {
+  if (task.status === 'assigned') return true
+  if (task.status !== 'inbox') return false
+  if (taskHasHumanClarificationSignal(task)) return false
+  return taskDefinitionScore(task) >= 3
+}
+
+function taskFocusRank(task: Task, status: OperatorStatus) {
+  switch (status.state) {
+    case 'waiting_for_human':
+    case 'waiting_for_approval':
+      return 0
+    case 'blocked':
+    case 'failed':
+      return 1
+    case 'running':
+      return 2
+    case 'reconnecting':
+      return 3
+    case 'waiting_for_schedule':
+      return 4
+    case 'queued':
+      if (status.label === 'Ready') return 5
+      if (status.label === 'Queued') return 6
+      if (status.label === 'Needs clarification') return 7
+      if (status.label === 'Define first') return 8
+      if (status.label === 'Inbox') return 9
+      return 10
+    case 'completed':
+      return 11
+    default:
+      return 12
+  }
+}
+
 export function getOperatorToneClasses(tone: OperatorStatus['tone']) {
   switch (tone) {
     case 'green':
@@ -122,8 +220,9 @@ function formatClock(timestamp: number) {
 
 export function getOperatorHeartbeatEmoji(snapshot: Pick<OperatorStatusSnapshot, 'summary' | 'focusStatus'>) {
   if (snapshot.focusStatus.state === 'waiting_for_human' || snapshot.focusStatus.state === 'waiting_for_approval' || snapshot.summary.waitingOnYou > 0) return '🔵'
-  if (snapshot.focusStatus.state === 'blocked' || snapshot.focusStatus.state === 'failed' || snapshot.focusStatus.state === 'reconnecting' || snapshot.summary.blocked > 0) return '🟠'
+  if (snapshot.focusStatus.state === 'blocked' || snapshot.focusStatus.state === 'failed' || snapshot.summary.blocked > 0) return '🟠'
   if (snapshot.focusStatus.state === 'running' || snapshot.summary.running > 0) return '🟢'
+  if (snapshot.summary.connectionStatus.state === 'reconnecting') return '🟡'
   return '⚪'
 }
 
@@ -166,10 +265,10 @@ export function deriveConnectionOperatorStatus(connection: ConnectionStatus): Op
   }
 
   return {
-    state: 'blocked',
+    state: 'queued',
     label: 'Disconnected',
     tone: 'gray',
-    reason: 'Not connected to the gateway',
+    reason: 'Gateway is offline; work can resume when it reconnects',
     since: connection.lastEventAt,
     lastProgressAt: connection.lastEventAt,
   }
@@ -203,7 +302,14 @@ export function deriveSessionOperatorStatus(args: {
   if (!connection.isConnected) {
     const connectionStatus = deriveConnectionOperatorStatus(connection)
     return {
-      ...connectionStatus,
+      state: 'queued',
+      label: connectionStatus.state === 'reconnecting' ? 'Paused by gateway' : 'Waiting on gateway',
+      tone: connectionStatus.state === 'reconnecting' ? 'yellow' : 'gray',
+      reason: connectionStatus.state === 'reconnecting'
+        ? connectionStatus.reason || 'Gateway is reconnecting; this session should resume automatically'
+        : 'Gateway is offline; this session is paused until the connection returns',
+      nextExpectedAt: connectionStatus.nextExpectedAt,
+      actionRequired: connectionStatus.actionRequired,
       lastProgressAt: progressAt || connectionStatus.lastProgressAt,
     }
   }
@@ -289,7 +395,7 @@ export function deriveTaskOperatorStatus(args: {
   cronJobs?: CronJob[]
 }): OperatorStatus {
   const { task, sessions, connection, execApprovals, spawnRequests, cronJobs = [] } = args
-  const metadata = (task.metadata || {}) as Record<string, any>
+  const metadata = taskMetadata(task)
   const dispatchSessionId = typeof metadata.dispatch_session_id === 'string' ? metadata.dispatch_session_id : undefined
   const linkedSession = dispatchSessionId
     ? sessions.find((session) => matchSessionRef(session, dispatchSessionId))
@@ -327,6 +433,19 @@ export function deriveTaskOperatorStatus(args: {
   }
 
   if (task.status === 'in_progress') {
+    if (!connection.isConnected) {
+      const connectionStatus = deriveConnectionOperatorStatus(connection)
+      return {
+        state: 'queued',
+        label: connectionStatus.state === 'reconnecting' ? 'Paused by gateway' : 'Waiting on gateway',
+        tone: connectionStatus.state === 'reconnecting' ? 'yellow' : 'gray',
+        reason: 'Task was in progress, but the gateway connection is currently unavailable',
+        nextExpectedAt: connectionStatus.nextExpectedAt,
+        actionRequired: connectionStatus.actionRequired,
+        lastProgressAt: task.updated_at * 1000,
+      }
+    }
+
     return {
       state: 'blocked',
       label: 'Needs session',
@@ -337,12 +456,44 @@ export function deriveTaskOperatorStatus(args: {
     }
   }
 
+  if (taskHasHumanClarificationSignal(task)) {
+    return {
+      state: 'waiting_for_human',
+      label: 'Needs clarification',
+      tone: 'blue',
+      reason: 'Task is waiting for missing context or a human answer before it can start cleanly',
+      lastProgressAt: task.updated_at * 1000,
+      actionRequired: 'Clarify the task so execution can start',
+    }
+  }
+
   if (task.status === 'assigned') {
     return {
       state: 'queued',
-      label: 'Queued',
+      label: 'Ready',
       tone: 'purple',
-      reason: task.assigned_to ? `Assigned to ${task.assigned_to}` : 'Assigned and waiting to start',
+      reason: task.assigned_to ? `Assigned to ${task.assigned_to} and ready to start` : 'Assigned and ready to start',
+      lastProgressAt: task.updated_at * 1000,
+    }
+  }
+
+  if (taskNeedsDefinitionFirst(task)) {
+    return {
+      state: 'queued',
+      label: 'Define first',
+      tone: 'gray',
+      reason: 'Inbox draft is too thin to execute safely; define the outcome or next step first',
+      lastProgressAt: task.updated_at * 1000,
+      actionRequired: 'Add a clearer brief, acceptance criteria, or next step',
+    }
+  }
+
+  if (taskIsReady(task)) {
+    return {
+      state: 'queued',
+      label: 'Ready',
+      tone: 'purple',
+      reason: 'Task looks defined enough to dispatch when capacity is available',
       lastProgressAt: task.updated_at * 1000,
     }
   }
@@ -367,18 +518,21 @@ export function summarizeOperatorStatus(args: {
   const sessionStatuses = sessions.map((session) =>
     deriveSessionOperatorStatus({ session, connection, execApprovals, spawnRequests, cronJobs })
   )
+  const connectionStatus = deriveConnectionOperatorStatus(connection)
 
   const waitingOnYou = sessionStatuses.filter((status) =>
     status.state === 'waiting_for_human' || status.state === 'waiting_for_approval'
   ).length
-  const blocked = sessionStatuses.filter((status) =>
-    status.state === 'blocked' || status.state === 'failed' || status.state === 'reconnecting'
+  const blockedFromSessions = sessionStatuses.filter((status) =>
+    status.state === 'blocked' || status.state === 'failed'
   ).length
+  const blocked = blockedFromSessions + (connectionStatus.state === 'blocked' ? 1 : 0)
   const running = sessionStatuses.filter((status) => status.state === 'running').length
   const nextExpectedAt = [
-    ...sessionStatuses.map((status) => status.nextExpectedAt).filter((v): v is number => typeof v === 'number'),
-    ...cronJobs.map((job) => (job.nextRun ? job.nextRun * 1000 : undefined)).filter((v): v is number => typeof v === 'number'),
-  ].sort((a, b) => a - b)[0]
+    connectionStatus.nextExpectedAt,
+    ...sessionStatuses.map((status) => status.nextExpectedAt),
+    ...cronJobs.map((job) => (job.nextRun ? job.nextRun * 1000 : undefined)),
+  ].filter((v): v is number => typeof v === 'number').sort((a, b) => a - b)[0]
 
   const lastEventAt = [
     connection.lastEventAt,
@@ -387,7 +541,7 @@ export function summarizeOperatorStatus(args: {
   ].filter((v): v is number => typeof v === 'number').sort((a, b) => b - a)[0]
 
   return {
-    connectionStatus: deriveConnectionOperatorStatus(connection),
+    connectionStatus,
     waitingOnYou,
     blocked,
     running,
@@ -426,7 +580,11 @@ export function buildPinnedOperatorSnapshot(args: {
       spawnRequests,
       cronJobs,
     }),
-  }))
+  })).sort((a, b) => {
+    const rankDelta = taskFocusRank(a.task, a.status) - taskFocusRank(b.task, b.status)
+    if (rankDelta !== 0) return rankDelta
+    return (b.status.lastProgressAt || 0) - (a.status.lastProgressAt || 0)
+  })
 
   const sessionStatuses = sessions.map((session) => ({
     session,
@@ -441,31 +599,38 @@ export function buildPinnedOperatorSnapshot(args: {
 
   const topTask =
     taskStatuses.find(({ status }) => status.state === 'waiting_for_human' || status.state === 'waiting_for_approval') ||
-    taskStatuses.find(({ status }) => status.state === 'blocked' || status.state === 'failed' || status.state === 'reconnecting') ||
-    taskStatuses.find(({ status }) => status.state === 'running')
+    taskStatuses.find(({ status }) => status.state === 'blocked' || status.state === 'failed') ||
+    taskStatuses.find(({ status }) => status.state === 'running') ||
+    taskStatuses.find(({ status }) => status.label === 'Ready' || status.label === 'Queued')
 
   const topSession =
     sessionStatuses.find(({ status }) => status.state === 'waiting_for_human' || status.state === 'waiting_for_approval') ||
-    sessionStatuses.find(({ status }) => status.state === 'blocked' || status.state === 'failed' || status.state === 'reconnecting') ||
+    sessionStatuses.find(({ status }) => status.state === 'blocked' || status.state === 'failed') ||
     sessionStatuses.find(({ status }) => status.state === 'running')
 
   const priorityStatus = topTask?.status || topSession?.status
 
   const headline = priorityStatus?.state === 'waiting_for_human' || priorityStatus?.state === 'waiting_for_approval'
     ? 'Waiting on you'
-    : priorityStatus?.state === 'blocked' || priorityStatus?.state === 'failed' || priorityStatus?.state === 'reconnecting'
+    : priorityStatus?.state === 'blocked' || priorityStatus?.state === 'failed'
       ? 'Blocked work exists'
       : priorityStatus?.state === 'running' || summary.running > 0
         ? 'Work is running'
-        : 'No active blockers'
+        : topTask?.status.label === 'Ready'
+          ? 'Ready to dispatch'
+          : summary.connectionStatus.state === 'reconnecting'
+            ? 'Reconnecting'
+            : 'No active blockers'
 
   const reason = priorityStatus?.state === 'waiting_for_human' || priorityStatus?.state === 'waiting_for_approval'
     ? priorityStatus.reason
-    : priorityStatus?.state === 'blocked' || priorityStatus?.state === 'failed' || priorityStatus?.state === 'reconnecting'
+    : priorityStatus?.state === 'blocked' || priorityStatus?.state === 'failed'
       ? priorityStatus.reason
       : priorityStatus?.state === 'running' || summary.running > 0
         ? `${summary.running} active run${summary.running === 1 ? '' : 's'} currently making progress`
-        : summary.connectionStatus.reason
+        : topTask?.status.label === 'Ready'
+          ? topTask.status.reason
+          : summary.connectionStatus.reason
 
   const focusLabel = topTask
     ? `Task • ${topTask.task.title}`
