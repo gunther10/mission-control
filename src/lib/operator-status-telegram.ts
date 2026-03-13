@@ -143,6 +143,48 @@ function compactReason(reason?: string, max = 120) {
   return value.length > max ? `${value.slice(0, max - 1)}…` : value
 }
 
+function compactLabel(label?: string, max = 42) {
+  return compactReason(label, max)
+}
+
+function bulletSection(title: string, items: string[]) {
+  if (items.length === 0) return `${title}: —`
+  return `${title}: ${items.map((item) => `• ${item}`).join('  ')}`
+}
+
+function buildCompactSectionItems(snapshot: OperatorSnapshot) {
+  const justDone = snapshot.tasks
+    .filter((item) => item.status.state === 'completed')
+    .slice(0, 3)
+    .map((item) => compactLabel(item.label, 36))
+
+  const doingCorrectly = [
+    ...snapshot.tasks.filter((item) => item.status.state === 'running'),
+    ...snapshot.sessions.filter((item) => item.status.state === 'running'),
+  ]
+    .slice(0, 3)
+    .map((item) => compactLabel(item.label, 36))
+
+  const next = [
+    ...snapshot.tasks.filter((item) => item.id !== snapshot.focus.id),
+    ...snapshot.sessions.filter((item) => item.id !== snapshot.focus.id),
+  ]
+    .filter((item) => item.status.state !== 'completed' && item.status.state !== 'running')
+    .slice(0, 3)
+    .map((item) => {
+      const state = item.status.state === 'waiting_for_human' || item.status.state === 'waiting_for_approval'
+        ? 'need'
+        : item.status.state === 'blocked' || item.status.state === 'failed' || item.status.state === 'reconnecting'
+          ? 'fix'
+          : item.status.state === 'waiting_for_schedule'
+            ? 'scheduled'
+            : 'queue'
+      return `${state} ${compactLabel(item.label, 30)}`
+    })
+
+  return { justDone, doingCorrectly, next }
+}
+
 export function formatOperatorSnapshotTelegramMessage(snapshot: OperatorSnapshot, options?: { now?: number }) {
   const now = options?.now ?? Date.now()
   const leadEmoji = statusEmoji(snapshot.focus.status.state || snapshot.summary.connectionStatus.state)
@@ -155,14 +197,18 @@ export function formatOperatorSnapshotTelegramMessage(snapshot: OperatorSnapshot
     hour: '2-digit',
     minute: '2-digit',
   }), 16) : '—'
+  const sections = buildCompactSectionItems(snapshot)
 
   const lines = [
     `${leadEmoji} <b>MC ${escapeHtml(formatLisbonClock(now))}</b>`,
     `${escapeHtml(snapshot.summary.headline)} · run ${snapshot.summary.running} · wait ${snapshot.summary.waitingOnYou} · block ${snapshot.summary.blocked}`,
     `<b>${escapeHtml(snapshot.focus.label)}</b> — ${escapeHtml(snapshot.focus.status.label)}`,
-    escapeHtml(compactReason(snapshot.focus.status.reason, 160)),
-    `Age: ${escapeHtml(focusAge)} · Updated: ${escapeHtml(updatedAge)} · Next: ${escapeHtml(nextText)}`,
-    `Action: ${escapeHtml(compactReason(snapshot.focus.status.actionRequired || snapshot.summary.reason, 140))}`,
+    `Why: ${escapeHtml(compactReason(snapshot.focus.status.reason, 140))}`,
+    `Need: ${escapeHtml(compactReason(snapshot.focus.status.actionRequired || snapshot.summary.reason, 120))}`,
+    `Time: age ${escapeHtml(focusAge)} · next ${escapeHtml(nextText)} · upd ${escapeHtml(updatedAge)}`,
+    escapeHtml(bulletSection('Just done', sections.justDone)),
+    escapeHtml(bulletSection('Doing correctly', sections.doingCorrectly)),
+    escapeHtml(bulletSection('Next', sections.next)),
   ]
 
   return lines.join('\n')

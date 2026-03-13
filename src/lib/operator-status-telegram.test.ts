@@ -34,7 +34,7 @@ describe('formatOperatorSnapshotTelegramMessage', () => {
     process.env.TELEGRAM_BOT_TOKEN = previousDefault
   })
 
-  it('renders a compact HTML-safe operator-truth status', () => {
+  it('renders a compact HTML-safe operator-truth status with richer sections', () => {
     const snapshot = {
       generatedAt: Date.UTC(2026, 2, 12, 22, 15),
       summary: {
@@ -64,14 +64,16 @@ describe('formatOperatorSnapshotTelegramMessage', () => {
         status: { state: 'blocked', label: 'Blocked', tone: 'red', reason: 'Gateway unreachable' },
       },
       tasks: [
-        { kind: 'task', id: '1', label: 'A < B', status: { state: 'running', label: 'Running', tone: 'green', reason: 'Shipping' } },
+        { kind: 'task', id: 'done-1', label: 'Closed <loop>', status: { state: 'completed', label: 'Done', tone: 'green', reason: 'Finished' } },
+        { kind: 'task', id: 'run-1', label: 'A < B', status: { state: 'running', label: 'Running', tone: 'green', reason: 'Shipping' } },
+        { kind: 'task', id: 'next-1', label: 'Need human reply', status: { state: 'waiting_for_human', label: 'Waiting', tone: 'blue', reason: 'Waiting for reply' } },
       ],
       sessions: [
         { kind: 'session', id: 's1', label: 'agent & one', status: { state: 'blocked', label: 'Blocked', tone: 'red', reason: 'Needs reconnect' } },
       ],
       meta: {
         workspaceId: 1,
-        totalTasks: 1,
+        totalTasks: 3,
         totalSessions: 1,
         totalCronJobs: 0,
         pendingApprovals: 0,
@@ -83,10 +85,12 @@ describe('formatOperatorSnapshotTelegramMessage', () => {
     expect(message).toContain('MC 22:20')
     expect(message).toContain('Waiting &lt;now&gt; · run 3 · wait 1 · block 2')
     expect(message).toContain('Fix &lt;pin&gt;')
-    expect(message).toContain('Need approval &amp; signoff')
-    expect(message).toContain('Age: —')
-    expect(message).toContain('Updated: 5m')
-    expect(message).toContain('Action: Need &amp; reply')
+    expect(message).toContain('Why: Need approval &amp; signoff')
+    expect(message).toContain('Need: Need &amp; reply')
+    expect(message).toContain('Time: age — · next — · upd 5m')
+    expect(message).toContain('Just done: • Closed &lt;loop&gt;')
+    expect(message).toContain('Doing correctly: • A &lt; B')
+    expect(message).toContain('Next: • need Need human reply')
   })
 
   it('treats the telegram status message as due every five minutes', () => {
